@@ -1,9 +1,7 @@
-name: Rust CI
+name: CI
 
 on:
   push:
-    branches: ["main"]
-  pull_request:
     branches: ["main"]
   workflow_dispatch:
 
@@ -11,44 +9,14 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  build-macos:
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: moonrepo/setup-rust@v1
-      - name: Download npcap sdk
-        run: curl --silent --show-error --fail -o ./npcap-sdk.zip "https://npcap.com/dist/npcap-sdk-1.13.zip"
-      - name: Extract npcap x64 libs
-        run: |
-          unzip -p npcap-sdk.zip Lib/x64/Packet.lib > Packet.lib
-          unzip -p npcap-sdk.zip Lib/x64/wpcap.lib > wpcap.lib
-      - name: Build pcap Windows exe
-        run: cargo build --verbose --no-default-features --features pcap,stream,gui
-      - name: Move pcap exe
-        run: mv -Force target/debug/reliquary-archiver.exe target/debug/reliquary-archiver-pcap-x64.exe
-      - uses: actions/upload-artifact@v4
-        with:
-          name: reliquary-archiver-pcap-x64
-          path: target/debug/reliquary-archiver-pcap-x64.exe
-      - name: Build pktmon Windows exe
-        run: cargo build --verbose --no-default-features --features pktmon,stream,gui
-      - name: Move pktmon exe
-        run: mv -Force target/debug/reliquary-archiver.exe target/debug/reliquary-archiver-pktmon-x64.exe
-      - uses: actions/upload-artifact@v4
-        with:
-          name: reliquary-archiver-pktmon-x64
-          path: target/debug/reliquary-archiver-pktmon-x64.exe
-
-  build-linux:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: moonrepo/setup-rust@v1
-      - name: Install deps
-        run: sudo apt install -y libpcap-dev libwayland-dev
       - name: Build
-        run: cargo build --verbose --no-default-features --features pcap,stream
+        run: cargo build --locked --verbose --no-default-features --features pcap,stream
       - uses: actions/upload-artifact@v4
         with:
-          name: reliquary-archiver-linux-pcap-x64
+          name: reliquary-archiver-macos
           path: target/debug/reliquary-archiver

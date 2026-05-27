@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs::File;
+use std::io::BufReader;
 use std::path::Path;
 
 use reliquary::resource::excel::{
@@ -12,6 +13,7 @@ use ureq::serde::Serialize;
 use ureq::serde::de::DeserializeOwned;
 
 const BASE_RESOURCE_URL: &str = "https://gitlab.com/Dimbreath/turnbasedgamedata/-/raw/main";
+const FALLBACK_RESOURCE_DIR: &str = "resources/fallback";
 
 macro_rules! download_config {
     ($t:ty, $ex:expr, [$($url:expr),+ $(,)?]) => {
@@ -74,24 +76,30 @@ macro_rules! download_config_and_store_partial_text_hashes {
 
 fn main() {
     println!("cargo:rerun-if-changed=Cargo.toml");
+    println!("cargo:rerun-if-changed={FALLBACK_RESOURCE_DIR}");
 
     // the text map is really, REALLY large (>25MB), so we're optimizing by only
     // keeping the entries used from relevant config files where the strings are required
     // for the export
     let mut text_hashes: HashSet<TextMapEntry> = HashSet::new();
 
-    download_config_and_store_text_hashes!(AvatarConfigMap, AvatarName, text_hashes, [
-        &resource_url::<AvatarConfigMap>(),
-        &resource_url_of("AvatarConfigLD.json"),
-    ]);
+    download_config_and_store_text_hashes!(
+        AvatarConfigMap,
+        AvatarName,
+        text_hashes,
+        [&resource_url::<AvatarConfigMap>(), &resource_url_of("AvatarConfigLD.json"),]
+    );
     download_config_and_store_text_hashes!(EquipmentConfigMap, EquipmentName, text_hashes);
     download_config_and_store_text_hashes!(RelicSetConfigMap, SetName, text_hashes);
     download_config_and_store_partial_text_hashes!(ItemConfigMap, ItemName, text_hashes);
 
-    download_config!(AvatarSkillTreeConfigMap, [
-        &resource_url::<AvatarSkillTreeConfigMap>(),
-        &resource_url_of("AvatarSkillTreeConfigLD.json"),
-    ]);
+    download_config!(
+        AvatarSkillTreeConfigMap,
+        [
+            &resource_url::<AvatarSkillTreeConfigMap>(),
+            &resource_url_of("AvatarSkillTreeConfigLD.json"),
+        ]
+    );
     download_config!(MultiplePathAvatarConfigMap);
     download_config!(RelicConfigMap);
     download_config!(RelicMainAffixConfigMap);
@@ -130,11 +138,27 @@ fn resource_url_of(name: &str) -> String {
 }
 
 fn download_as_json<T: DeserializeOwned>(url: &str) -> T {
-    ureq::get(url)
-        .call()
-        .unwrap()
-        .into_json()
-        .unwrap_or_else(|_| panic!("Failed to read json from url: {}", url))
+    match ureq::get(url).call() {
+        Ok(response) => match response.into_json() {
+            Ok(value) => value,
+            Err(error) => {
+                println!("cargo:warning=failed to parse {url}: {error}");
+                read_fallback_json(url).unwrap_or_else(|| panic!("Failed to read json from url or fallback cache: {}", url))
+            }
+        },
+        Err(error) => {
+            println!("cargo:warning=failed to fetch {url}: {error}");
+            read_fallback_json(url).unwrap_or_else(|| panic!("Failed to read json from url or fallback cache: {}", url))
+        }
+    }
+}
+
+fn read_fallback_json<T: DeserializeOwned>(url: &str) -> Option<T> {
+    let file_name = url.rsplit('/').next()?;
+    let path = Path::new(FALLBACK_RESOURCE_DIR).join(file_name);
+    let file = File::open(&path).ok()?;
+    println!("cargo:warning=using fallback resource cache {}", path.display());
+    ureq::serde_json::from_reader(BufReader::new(file)).ok()
 }
 
 fn write_to_out<T: DeserializeOwned + Serialize>(value: T, file_name: &str) {

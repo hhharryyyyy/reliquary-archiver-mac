@@ -7,6 +7,7 @@ use std::io;
 use std::io::Write;
 use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{Arc, LazyLock, LockResult, Mutex, TryLockResult};
@@ -57,6 +58,11 @@ struct Args {
     #[cfg(feature = "pcap")]
     #[arg(long)]
     pcap: Option<PathBuf>,
+
+    /// UDID to use when more than one iPhone is connected.
+    #[cfg(all(target_os = "macos", feature = "pcap"))]
+    #[arg(long)]
+    udid: Option<String>,
 
     /// Read packets from .etl file instead of capturing live packets
     #[cfg(feature = "pktmon")]
@@ -282,15 +288,20 @@ async fn capture(args: Args) {
         return;
     }
 
+    let iphone_rvi = setup_iphone_capture(&args);
+    let capture_interface = iphone_rvi.as_ref().map(|rvi| rvi.interface.clone());
+
     // Headless/CLI mode
     {
+        log_capture_start_hints(&args);
+
         let database = Database::new();
         let sniffer = GameSniffer::new();
         let exporter = OptimizerExporter::new();
 
         let capture_mode = CaptureMode::from_args(&args);
         let export = match capture_mode {
-            CaptureMode::Live => live_capture_wrapper(&args, exporter, sniffer).await,
+            CaptureMode::Live => live_capture_wrapper(&args, exporter, sniffer, capture_interface).await,
             #[cfg(feature = "pcap")]
             CaptureMode::Pcap(path) => capture_from_pcap(exporter, sniffer, path),
             #[cfg(feature = "pktmon")]
@@ -342,6 +353,272 @@ async fn capture(args: Args) {
         }
         if let Some(log_path) = args.log_path {
             info!("wrote logs to {}", log_path.display());
+        }
+    }
+}
+
+struct IphoneRviGuard {
+    interface: String,
+    #[cfg(all(target_os = "macos", feature = "pcap"))]
+    udid: String,
+}
+
+#[cfg(all(target_os = "macos", feature = "pcap"))]
+impl Drop for IphoneRviGuard {
+    fn drop(&mut self) {
+        match Command::new(rvictl_path()).args(["-x", &self.udid]).output() {
+            Ok(output) if output.status.success() => {
+                info!(interface = %self.interface, "stopped iPhone Remote Virtual Interface");
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                warn!(interface = %self.interface, %stderr, "failed to stop iPhone Remote Virtual Interface");
+            }
+            Err(error) => {
+                warn!(interface = %self.interface, %error, "failed to run rvictl cleanup");
+            }
+        }
+    }
+}
+
+#[cfg(all(target_os = "macos", feature = "pcap"))]
+fn setup_iphone_capture(args: &Args) -> Option<IphoneRviGuard> {
+    if args.pcap.is_some() {
+        return None;
+    }
+
+    ensure_rvi_daemon_loaded();
+
+    let udid = match &args.udid {
+        Some(udid) => udid.clone(),
+        None => match detect_connected_iphone_udid() {
+            Ok(udid) => udid,
+            Err(error) => {
+                error!(%error, "could not auto-detect connected iPhone");
+                error!("connect one iPhone over USB, trust this Mac, open Xcode once if needed, or pass --udid <UDID>");
+                std::process::exit(2);
+            }
+        },
+    };
+
+    let output = match Command::new(rvictl_path()).args(["-s", &udid]).output() {
+        Ok(output) => output,
+        Err(error) => {
+            error!(%error, "failed to run rvictl");
+            error!("install Xcode and open it once so macOS installs rvictl, then retry");
+            std::process::exit(2);
+        }
+    };
+
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        error!(%stdout, %stderr, "rvictl failed to create an iPhone capture interface");
+        std::process::exit(2);
+    }
+
+    let output_text = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let interface = match parse_rvictl_interface(&output_text) {
+        Some(interface) => interface,
+        None => {
+            error!(%output_text, "rvictl succeeded but did not report a capture interface");
+            std::process::exit(2);
+        }
+    };
+
+    info!(%interface, "capturing iPhone traffic through Remote Virtual Interface");
+    Some(IphoneRviGuard { interface, udid })
+}
+
+#[cfg(all(target_os = "macos", feature = "pcap"))]
+fn ensure_rvi_daemon_loaded() {
+    const RPMUXD_PLIST: &str = "/Library/Apple/System/Library/LaunchDaemons/com.apple.rpmuxd.plist";
+
+    if Command::new("launchctl")
+        .args(["print", "system/com.apple.rpmuxd"])
+        .output()
+        .is_ok_and(|output| output.status.success())
+    {
+        return;
+    }
+
+    if !std::path::Path::new(RPMUXD_PLIST).exists() {
+        warn!("Apple RVI daemon plist was not found; rvictl may fail to start");
+        return;
+    }
+
+    match Command::new("launchctl").args(["bootstrap", "system", RPMUXD_PLIST]).output() {
+        Ok(output) if output.status.success() => {
+            info!("loaded Apple RVI daemon");
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            warn!(%stderr, "failed to load Apple RVI daemon; rvictl may fail to start");
+        }
+        Err(error) => {
+            warn!(%error, "failed to run launchctl for Apple RVI daemon");
+        }
+    }
+}
+
+#[cfg(all(target_os = "macos", feature = "pcap"))]
+fn rvictl_path() -> &'static str {
+    if std::path::Path::new("/Library/Apple/usr/bin/rvictl").exists() {
+        "/Library/Apple/usr/bin/rvictl"
+    } else {
+        "rvictl"
+    }
+}
+
+#[cfg(not(all(target_os = "macos", feature = "pcap")))]
+fn setup_iphone_capture(_args: &Args) -> Option<IphoneRviGuard> {
+    None
+}
+
+#[cfg(all(target_os = "macos", feature = "pcap"))]
+fn detect_connected_iphone_udid() -> Result<String, String> {
+    match detect_connected_iphone_udid_with_devicectl() {
+        Ok(udid) => return Ok(udid),
+        Err(error) => {
+            debug!(%error, "devicectl iPhone detection failed, falling back to xctrace");
+        }
+    }
+
+    let output = Command::new("xcrun")
+        .args(["xctrace", "list", "devices"])
+        .output()
+        .map_err(|error| format!("failed to run xcrun xctrace list devices: {error}"))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "xcrun xctrace list devices failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut in_physical_devices = false;
+    let mut udids = Vec::new();
+
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed == "== Devices ==" {
+            in_physical_devices = true;
+            continue;
+        }
+        if trimmed.starts_with("== ") && trimmed != "== Devices ==" {
+            in_physical_devices = false;
+        }
+        if !in_physical_devices || !trimmed.contains("iPhone") {
+            continue;
+        }
+        if let Some(udid) = extract_last_parenthesized(trimmed).filter(|value| looks_like_udid(value)) {
+            udids.push(udid.to_string());
+        }
+    }
+
+    match udids.len() {
+        0 => Err("no connected iPhone found in xctrace device list".to_string()),
+        1 => Ok(udids.remove(0)),
+        _ => Err(format!(
+            "multiple connected iPhones found; pass --udid with one of: {}",
+            udids.join(", ")
+        )),
+    }
+}
+
+#[cfg(all(target_os = "macos", feature = "pcap"))]
+fn detect_connected_iphone_udid_with_devicectl() -> Result<String, String> {
+    let output = Command::new("xcrun")
+        .args(["devicectl", "list", "devices"])
+        .output()
+        .map_err(|error| format!("failed to run xcrun devicectl list devices: {error}"))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "xcrun devicectl list devices failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut identifiers = Vec::new();
+
+    for line in stdout.lines() {
+        if line.contains("iPhone") && line.contains("available") {
+            let columns = line.split_whitespace().collect::<Vec<_>>();
+            if let Some(identifier) = columns.iter().find(|column| looks_like_coredevice_identifier(column)) {
+                identifiers.push((*identifier).to_string());
+            }
+        }
+    }
+
+    match identifiers.len() {
+        0 => Err("no available iPhone found in devicectl device list".to_string()),
+        1 => udid_for_coredevice_identifier(&identifiers[0]),
+        _ => Err(format!(
+            "multiple connected iPhones found; pass --udid with one of these CoreDevice identifiers: {}",
+            identifiers.join(", ")
+        )),
+    }
+}
+
+#[cfg(all(target_os = "macos", feature = "pcap"))]
+fn udid_for_coredevice_identifier(identifier: &str) -> Result<String, String> {
+    let output = Command::new("xcrun")
+        .args(["devicectl", "device", "info", "details", "--device", identifier])
+        .output()
+        .map_err(|error| format!("failed to run xcrun devicectl device info details: {error}"))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "xcrun devicectl device info details failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("• udid: ").map(str::to_string))
+        .ok_or_else(|| format!("devicectl did not report a UDID for {identifier}"))
+}
+
+#[cfg(all(target_os = "macos", feature = "pcap"))]
+fn parse_rvictl_interface(output: &str) -> Option<String> {
+    output.lines().find_map(|line| {
+        let (_, interface) = line.split_once("with interface ")?;
+        interface.split_whitespace().next().map(str::to_string)
+    })
+}
+
+#[cfg(all(target_os = "macos", feature = "pcap"))]
+fn extract_last_parenthesized(value: &str) -> Option<&str> {
+    let end = value.rfind(')')?;
+    let start = value[..end].rfind('(')?;
+    Some(&value[start + 1..end])
+}
+
+#[cfg(all(target_os = "macos", feature = "pcap"))]
+fn looks_like_udid(value: &str) -> bool {
+    value.len() >= 24 && value.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+}
+
+#[cfg(all(target_os = "macos", feature = "pcap"))]
+fn looks_like_coredevice_identifier(value: &str) -> bool {
+    value.len() == 36 && value.chars().all(|c| c.is_ascii_hexdigit() || c == '-') && value.matches('-').count() == 4
+}
+
+fn log_capture_start_hints(args: &Args) {
+    #[cfg(all(target_os = "macos", feature = "pcap"))]
+    {
+        if args.pcap.is_none() {
+            info!("macOS live capture uses libpcap/BPF and may need sudo");
+            info!("connect the iPhone over USB before tapping \"Click to Start\"");
         }
     }
 }
@@ -558,7 +835,7 @@ where
     exporter.export()
 }
 
-async fn live_capture_wrapper<E>(args: &Args, exporter: E, sniffer: GameSniffer) -> Option<E::Export>
+async fn live_capture_wrapper<E>(args: &Args, exporter: E, sniffer: GameSniffer, capture_interface: Option<String>) -> Option<E::Export>
 where
     E: Exporter,
     E::Export: From<<OptimizerExporter as Exporter>::Export>,
@@ -598,7 +875,7 @@ where
     let selected_account_tx = None;
 
     // Run live capture with manager
-    let result = live_capture(args, manager, sniffer, selected_account_tx, streaming).await;
+    let result = live_capture(args, manager, sniffer, selected_account_tx, streaming, capture_interface).await;
     result.map(|export| export.into())
 }
 
@@ -609,6 +886,7 @@ async fn live_capture(
     mut sniffer: GameSniffer,
     selected_account_tx: Option<tokio::sync::watch::Sender<Option<u32>>>,
     streaming: bool,
+    capture_interface: Option<String>,
 ) -> Option<<OptimizerExporter as Exporter>::Export> {
     use reliquary::network::command::command_id::{PlayerGetTokenScRsp, PlayerLoginFinishScRsp, PlayerLoginScRsp};
     use reliquary::network::command::proto::PlayerGetTokenScRsp::PlayerGetTokenScRsp as PlayerGetTokenScRspProto;
@@ -616,7 +894,8 @@ async fn live_capture(
     let rx = {
         #[cfg(feature = "pcap")]
         {
-            capture::listen_on_all(capture::pcap::PcapBackend)
+            let device_names = capture_interface.into_iter().collect();
+            capture::listen_on_all(capture::pcap::FilteredPcapBackend::new(device_names))
         }
 
         #[cfg(all(not(feature = "pcap"), feature = "pktmon"))]
@@ -761,9 +1040,7 @@ async fn live_capture(
                         match e {
                             NetworkError::ConnectionPacket(e) => {
                                 if let ConnectionPacketError::TransportLayerNotPresent = e {
-                                    warn!(
-                                        "This error tends to happen when using VPNs or similar programs. Please disable them and try again."
-                                    );
+                                    continue;
                                 }
 
                                 // Connection errors are not fatal as all network interfaces are funneled through the same stream

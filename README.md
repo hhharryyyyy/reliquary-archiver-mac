@@ -1,105 +1,86 @@
-# reliquary-archiver
+# Reliquary Archiver Mac
 
-_tool to create a relic export from network packets of a certain turn-based anime game_
+Mac-only CLI for exporting Honkai: Star Rail relic, light cone, character, and material data from an iPhone into the Fribbels optimizer format.
 
-json output format is based on the format of [HSR-Scanner](https://github.com/kel-z/HSR-Scanner)
+This is a small fork of [IceDynamix/reliquary-archiver](https://github.com/IceDynamix/reliquary-archiver). It keeps the upstream parser/export pipeline and focuses on one flow: macOS + USB iPhone.
 
-made to be used with [fribbels hsr optimizer](https://github.com/fribbels/hsr-optimizer)
+## Status
 
-## run
+- This is a public snapshot, not an actively maintained project.
+- Android, Windows, router capture, and GUI flows are out of scope here.
+- Please fork the repo if you want changes. Do not send PRs expecting maintenance.
 
-- If on Linux, or you know you want to use pcap (if you don't know what this means, you don't need to worry about it), follow the [pcap instructions](#pcap-instructions) at the bottom
-- Download latest release from [here](https://github.com/IceDynamix/reliquary-archiver/releases/)
-- **Launch the game and get to this screen. Do not go into the game yet**
-  ![main menu start screen](./hsr_hyperdrive.jpg)
-- run the archiver executable and wait until it says "Waiting for login..."
-  ![archiver waiting for login](./waiting_for_login.png)
-  the download button will say "Export not ready" until you start the game
-- start the game by pressing "Click to Start"
-- if successful, the archiver should switch to "Connected!" and the download button should become available
-  ![archiver visual guide](./archiver_visual_guide.avif)
-- Options:
-  1. Live Import **(recommended)** - check that "Enable Live Import" is enabled in the optimizer "Import" section and that it says "Connected".
-  2. Manual Import - click the download button and save the generated `archive_output-...json` file wherever you want
+## Quick Start
 
-Troubleshooting:
-- Please make sure you are fully entering the game; if you are still on the "Click to Start" train hyperdrive screen, you need to click to start.
-- Brave Shield is incompatible with Live Import, please make an exception for Fribbels
-- You might have to disable your VPN or enable/disable wifi!
-- If you were already in-game before launching the archiver, you must log out and log back in.
+Install Xcode, open it once, then install Rust if needed:
 
-alternatively, if you already have a packet capture file:
-
-- click "Upload .pcap"
-- select a `.pcap`, `.pcapng`, or `.etl` file
-- click the download button once the export is ready
-
-### cli usage
-
-```
-Usage: reliquary-archiver.exe [OPTIONS] [OUTPUT]
-
-Arguments:
-  [OUTPUT]  Path to output .json file to, per default: archive_output-%Y-%m-%dT%H-%M-%S.json
-
-Options:
-      --timeout <TIMEOUT>        How long to wait in seconds until timeout is triggered for live captures [default: 120]
-  -s, --stream                   Host a websocket server to stream relic/lc updates in real-time. This will disable the timeout
-  -p, --websocket-port <PORT>    Port to listen on for the websocket server, [default: 23313]
-  -v, --verbose...               How verbose the output should be, can be set up to 3 times. Has no effect if RUST_LOG is set
-  -l, --log-path <LOG_PATH>      Path to output log to
-      --no-update                Don't check for updates, only applicable on Windows
-      --always-update            Update without asking for confirmation, only applicable on Windows
-      --auth-token <AUTH_TOKEN>  Github Auth token to use when checking for updates, only applicable on Windows
-  -e, --exit-after-capture       Don't wait for enter to be pressed after capturing
-  -H, --headless                 Run in headless mode (no GUI), only applicable when GUI feature is enabled
-  -d, --detach                   Detach from the parent terminal (run in background), only applicable on Windows
-  -h, --help                     Print help
-
-Pcap Only:
-      --pcap <PCAP>              Read packets from .pcap file instead of capturing live packets
-
-Pktmon Only:
-      --etl <ETL>                Read packets from .etl file instead of capturing live packets
+```sh
+brew install rust
 ```
 
-to customize logging, either
+Build the Mac CLI:
 
-- set the verbose flags
-- or set `RUST_LOG` env variable to customize logging,
-  see [here](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html#directives)
+```sh
+cargo build --locked --release --no-default-features --features pcap,stream
+```
 
-to output logs to a file, provide `--log-path <path>`. file logs will always be trace-level.
+Install macOS capture permissions once:
 
-## build from source
+```sh
+sudo ./scripts/install-macos-capture-permissions.sh
+```
 
-- If building on Linux, or Windows with pcap, follow instructions [here](https://github.com/rust-pcap/pcap?tab=readme-ov-file#building)
-    - for me on windows, adding the `Packet.lib` and `wpcap.lib` from the sdk (check the x64 or arm dir)
-      to this directory was enough to link successfully
-- If building on Linux, there is also a dependency on `libwayland-dev`
-- `cargo build` / `cargo run`
+Open a new terminal window after setup.
 
-note that the necessary resource files are downloaded in the build script (`build.rs`) and compiled into the binary.
+Run live capture from a USB-connected iPhone:
 
-## pcap instructions
+```sh
+./target/release/reliquary-archiver
+```
 
-When running with the `pcap` feature (optional on Windows, required on Linux),
-the following requirements apply:
+## Capture Flow
 
-- requires [npcap](https://npcap.com/) (windows) or `libpcap` (linux)
-    - when installing on windows, make sure to enable the "winpcap api-compatible mode".
-      if this is grayed out for you, see [here](https://github.com/IceDynamix/reliquary-archiver/issues/2)
-      for more details
-        - if you use wifi, enable `Support raw 802.11 traffic (and monitor mode) for wireless adapters`
-    - when building on Linux, set the `CAP_NET_RAW` capability on the resulting executable (
-      via [pcap(3pcap)](https://man.archlinux.org/man/pcap.3pcap#Under~5))
-      ```sh
-      sudo setcap CAP_NET_RAW=+ep target/release/reliquary-archiver
-      ```
+1. Connect the iPhone over USB and tap "Trust This Computer".
+2. Launch HSR and stop at the "Click to Start" screen.
+3. Run `./target/release/reliquary-archiver`.
+4. Tap to enter the game.
+5. Wait for `archive_output-...json`.
+6. Import the JSON into Fribbels Star Rail Optimizer.
 
-## related projects
+If more than one iPhone is connected, pass a UDID:
 
-want to do more with packet parsing? check out the
-[standalone library](https://github.com/IceDynamix/reliquary) the archiver is built on top off!
+```sh
+./target/release/reliquary-archiver --udid <UDID>
+```
 
-looking to export your achievements? check out [stardb-exporter](https://github.com/juliuskreutz/stardb-exporter)!
+To import an existing packet capture instead of live iPhone traffic:
+
+```sh
+./target/release/reliquary-archiver --pcap capture.pcapng
+```
+
+The CLI creates Apple's Remote Virtual Interface (`rvi`), captures only that interface, and cleans it up when the process exits.
+
+## If It Breaks After An HSR Update
+
+Small game updates often keep working. Larger updates can change the packet protocol or game data.
+
+Try this in your fork:
+
+1. Update the `reliquary` dependency tag in `Cargo.toml`.
+2. Run `cargo update -p reliquary`.
+3. Rebuild with `cargo build --locked --release --no-default-features --features pcap,stream`.
+4. If the build script cannot fetch game data, refresh `resources/fallback/*.json` from Dimbreath's `turnbasedgamedata` repo.
+
+`Cargo.lock` is committed and builds use `--locked` so dependency versions stay pinned unless you intentionally update them.
+
+## Development Notes
+
+The parser is provided by the upstream `reliquary` crate. The Mac work should stay focused on:
+
+- pcap device discovery and selection
+- capture permission/error messages
+- reproducible iPhone RVI capture instructions
+- macOS CI and release packaging
+
+Avoid rewriting the protocol parser unless upstream stops being usable.

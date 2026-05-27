@@ -108,7 +108,9 @@ impl OptimizerExporter {
     fn get_multipath_base_id(&self, avatar_id: u32) -> u32 {
         self.database
             .multipath_avatar_config
-            .get(&avatar_id)
+            .0
+            .iter()
+            .find(|cfg| cfg.AvatarID == avatar_id)
             .map(|cfg| cfg.BaseAvatarID)
             .unwrap_or(avatar_id)
     }
@@ -255,19 +257,22 @@ impl OptimizerExporter {
 
     pub fn handle_gacha_info(&mut self, gacha_info: GetGachaInfoScRsp) {
         for banner in gacha_info.gacha_info_list {
-            self.banners.insert(banner.gacha_id, BannerInfo {
-                rate_up_item_list: banner.item_detail_list,
-                banner_type: match banner.gacha_id {
-                    1001 => BannerType::Standard,
-                    _ => {
-                        if self.is_lightcone(*banner.prize_item_list.first().unwrap()) {
-                            BannerType::LightCone
-                        } else {
-                            BannerType::Character
+            self.banners.insert(
+                banner.gacha_id,
+                BannerInfo {
+                    rate_up_item_list: banner.item_detail_list,
+                    banner_type: match banner.gacha_id {
+                        1001 => BannerType::Standard,
+                        _ => {
+                            if self.is_lightcone(*banner.prize_item_list.first().unwrap()) {
+                                BannerType::LightCone
+                            } else {
+                                BannerType::Character
+                            }
                         }
-                    }
+                    },
                 },
-            });
+            );
         }
     }
 

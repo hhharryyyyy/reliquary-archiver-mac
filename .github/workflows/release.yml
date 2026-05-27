@@ -1,85 +1,34 @@
-name: Create Release
+name: Release
+
 on:
   workflow_dispatch:
     inputs:
-      nextVersion:
-        description: "new version to push"
+      version:
+        description: "Release version, for example 0.15.0-mac.1"
         required: true
-        default: "0.0.0"
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  build-release:
+    runs-on: macos-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: moonrepo/setup-rust@v1
-      - name: Install toml-cli
-        run: cargo install toml-cli
-      - name: Update Cargo.toml with new version
-        # piping the output of toml-cli directly into the file will cause the file to be deleted before being read
-        # by toml-cli. excuse this workaround.
+      - name: Build
+        run: cargo build --locked --release --no-default-features --features pcap,stream
+      - name: Package
         run: |
-          toml set Cargo.toml package.version ${{inputs.nextVersion}} > Cargo.toml.tmp
-          rm Cargo.toml
-          mv Cargo.toml.tmp Cargo.toml
-          cargo generate-lockfile
-      - name: Download npcap sdk
-        run: curl --silent --show-error --fail -o ./npcap-sdk.zip "https://npcap.com/dist/npcap-sdk-1.13.zip"
-      - name: Extract npcap x64 libs
-        run: |
-          unzip -p npcap-sdk.zip Lib/x64/Packet.lib > Packet.lib
-          unzip -p npcap-sdk.zip Lib/x64/wpcap.lib > wpcap.lib
-      - name: Build pcap Windows exe
-        run: cargo build --release --no-default-features --features pcap,stream,gui
-      - name: Move pcap exe
-        run: mv -Force target/release/reliquary-archiver.exe target/release/reliquary-archiver-pcap-x64.exe
-      - name: Build pktmon Windows exe
-        run: cargo build --release --no-default-features --features pktmon,stream,gui
-      - name: Move pktmon exe
-        run: mv -Force target/release/reliquary-archiver.exe target/release/reliquary-archiver-pktmon-x64.exe
-      - name: Push updated version
-        run: |
-          git config user.name "reliquary-archiver bot"
-          git config user.email "reliquary-archiver.bot@users.noreply.github.com"
-          git add Cargo.toml
-          git add Cargo.lock
-          git commit -m "[skip ci] bump version to v${{inputs.nextVersion}}"
-          git push origin main
-      - uses: actions/upload-artifact@v4
-        with:
-          name: reliquary-archiver-pcap-x64
-          path: target/release/reliquary-archiver-pcap-x64.exe
-      - uses: actions/upload-artifact@v4
-        with:
-          name: reliquary-archiver-pktmon-x64
-          path: target/release/reliquary-archiver-pktmon-x64.exe
-  create-release:
-    runs-on: ubuntu-latest
-    needs: [build-windows]
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: moonrepo/setup-rust@v1
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: reliquary-archiver-pcap-x64
-          path: ./
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: reliquary-archiver-pktmon-x64
-          path: ./
-      - name: Create and push version tag
-        run: |
-          git tag v${{inputs.nextVersion}}
-          git push origin --tags
+          mkdir -p dist
+          cp target/release/reliquary-archiver dist/reliquary-archiver
+          cp scripts/install-macos-capture-permissions.sh dist/
+          tar -czf reliquary-archiver-mac-${{ inputs.version }}.tar.gz -C dist .
       - name: Create release
         uses: ncipollo/release-action@v1
         with:
-          tag: v${{inputs.nextVersion}}
-          name: "v${{inputs.nextVersion}}"
-          artifacts: "reliquary-archiver*.exe"
+          tag: v${{ inputs.version }}
+          name: v${{ inputs.version }}
+          artifacts: reliquary-archiver-mac-${{ inputs.version }}.tar.gz
