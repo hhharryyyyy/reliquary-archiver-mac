@@ -4,7 +4,7 @@ Tiny Mac + USB iPhone fork of [IceDynamix/reliquary-archiver](https://github.com
 
 I technically have Windows, but I mainly use a Mac and play HSR on iPhone, and I was too lazy to set up the Windows flow. I got this working well enough to generate a valid JSON export, so I am posting the snapshot here in case it helps someone else.
 
-This is not actively maintained. No Android/router/Windows support here. Please fork it if you want changes.
+I am too lazy to maintain this, so I am not accepting PRs or making updates. If you want to make changes, fork it. If you have issues getting it to work, ask Claude Code/Codex for help.
 
 ## Use It
 
