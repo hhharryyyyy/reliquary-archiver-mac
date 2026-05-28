@@ -12,27 +12,37 @@ This is a small fork of [IceDynamix/reliquary-archiver](https://github.com/IceDy
 
 ## Quick Start
 
-Install Xcode, open it once, then install Rust if needed:
+Install Xcode and open it once.
+
+Download the latest `reliquary-archiver-mac-*.tar.gz` from Releases, extract it, then run the one-time permission setup:
+
+```sh
+sudo ./install-macos-capture-permissions.sh
+```
+
+Open a new terminal window after setup, then run live capture from a USB-connected iPhone:
+
+```sh
+./reliquary-archiver
+```
+
+To build from source instead, install Rust if needed:
 
 ```sh
 brew install rust
 ```
 
-Build the Mac CLI:
-
 ```sh
 cargo build --locked --release --no-default-features --features pcap,stream
 ```
 
-Install macOS capture permissions once:
+Then run:
 
 ```sh
 sudo ./scripts/install-macos-capture-permissions.sh
 ```
 
-Open a new terminal window after setup.
-
-Run live capture from a USB-connected iPhone:
+Open a new terminal window after setup, then run:
 
 ```sh
 ./target/release/reliquary-archiver
@@ -42,7 +52,7 @@ Run live capture from a USB-connected iPhone:
 
 1. Connect the iPhone over USB and tap "Trust This Computer".
 2. Launch HSR and stop at the "Click to Start" screen.
-3. Run `./target/release/reliquary-archiver`.
+3. Run the archiver.
 4. Tap to enter the game.
 5. Wait for `archive_output-...json`.
 6. Import the JSON into Fribbels Star Rail Optimizer.
@@ -50,13 +60,13 @@ Run live capture from a USB-connected iPhone:
 If more than one iPhone is connected, pass a UDID:
 
 ```sh
-./target/release/reliquary-archiver --udid <UDID>
+./reliquary-archiver --udid <UDID>
 ```
 
 To import an existing packet capture instead of live iPhone traffic:
 
 ```sh
-./target/release/reliquary-archiver --pcap capture.pcapng
+./reliquary-archiver --pcap capture.pcapng
 ```
 
 The CLI creates Apple's Remote Virtual Interface (`rvi`), captures only that interface, and cleans it up when the process exits.
