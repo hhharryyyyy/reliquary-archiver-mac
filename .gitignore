@@ -1,10 +1,15 @@
 /target
 /.cargo
+/dist
 Packet.lib
 wpcap.lib
 .idea
 /*.json
 /*.log
+/*.pcap
+/*.pcapng
+/*.etl
+/*.tar.gz
 npcap-sdk*.zip
 .DS_Store
 *.bat
