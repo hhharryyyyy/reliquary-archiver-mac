@@ -1,6 +1,6 @@
-# Reliquary Archiver Mac
+**WARNING: I am not officially affiliated with [IceDynamix/reliquary-archiver](https://github.com/IceDynamix/reliquary-archiver). They make a really nice tool; this is way worse. This is just a fork I got working on Mac/iPhone, so I figured I would share it here in case people find it useful.**
 
-Warning: I am not officially affiliated with [IceDynamix/reliquary-archiver](https://github.com/IceDynamix/reliquary-archiver). They make a really nice tool; this is way worse. This is just a fork I got working on Mac/iPhone, so I figured I would share it here in case people find it useful.
+# Reliquary Archiver Mac
 
 I technically have Windows, but I mainly use a Mac and play HSR on iPhone, and I was too lazy to set up the Windows flow. I got this working well enough to generate a valid JSON export, so I am posting the snapshot here in case it helps someone else.
 

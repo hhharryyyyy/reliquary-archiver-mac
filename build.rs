@@ -106,13 +106,6 @@ fn main() {
     download_config!(RelicSubAffixConfigMap);
 
     save_text_map(&text_hashes, "EN");
-
-    #[cfg(target_os = "windows")]
-    {
-        let mut res = winres::WindowsResource::new();
-        res.set_icon("assets/icon.ico").set("InternalName", "Reliquary Archiver");
-        res.compile().unwrap();
-    }
 }
 
 fn save_text_map(hashes: &HashSet<TextMapEntry>, language: &str) {

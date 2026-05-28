@@ -9,19 +9,10 @@ use tokio::sync::mpsc;
 use tokio_stream::StreamMap;
 use tracing::instrument;
 
-use crate::scopefns::Also;
-
-#[cfg(all(windows, feature = "pktmon"))]
-pub mod pktmon;
-
 #[cfg(feature = "pcap")]
 pub mod pcap;
 
-#[cfg(not(any(feature = "pktmon", feature = "pcap")))]
-compile_error!("at least one of the features \"pktmon\" or \"pcap\" must be enabled");
-
-#[cfg(feature = "pktmon")]
-pub const PORT_RANGE: (u16, u16) = (23301, 23302);
+use crate::scopefns::Also;
 
 #[cfg(feature = "pcap")]
 pub const PCAP_FILTER: &str = "udp portrange 23301-23302";

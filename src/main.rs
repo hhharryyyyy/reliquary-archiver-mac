@@ -1,4 +1,3 @@
-#![cfg_attr(all(windows, feature = "gui"), windows_subsystem = "windows")]
 #![allow(unused)]
 
 use std::collections::HashSet;
@@ -34,12 +33,6 @@ use tracing_subscriber::{EnvFilter, Layer, Registry, reload};
 #[cfg(feature = "stream")]
 mod websocket;
 
-#[cfg(feature = "gui")]
-mod rgui;
-
-#[cfg(windows)]
-mod update;
-
 use reliquary_archiver::export::Exporter;
 use reliquary_archiver::export::database::Database;
 use reliquary_archiver::export::fribbels::OptimizerExporter;
@@ -64,11 +57,6 @@ struct Args {
     #[arg(long)]
     udid: Option<String>,
 
-    /// Read packets from .etl file instead of capturing live packets
-    #[cfg(feature = "pktmon")]
-    #[arg(long)]
-    etl: Option<PathBuf>,
-
     /// How long to wait in seconds until timeout is triggered for live captures
     #[arg(long, default_value_t = 120)]
     timeout: u64,
@@ -92,30 +80,9 @@ struct Args {
     #[arg(short, long)]
     log_path: Option<PathBuf>,
 
-    /// Don't check for updates, only applicable on Windows
-    #[arg(long)]
-    no_update: bool,
-
-    /// Update without asking for confirmation, only applicable on Windows
-    #[arg(long)]
-    always_update: bool,
-
-    /// Github Auth token to use when checking for updates, only applicable on Windows
-    #[arg(long)]
-    auth_token: Option<String>,
-
     /// Don't wait for enter to be pressed after capturing
     #[arg(short, long)]
     exit_after_capture: bool,
-    /// Run in headless mode (no GUI), only applicable when GUI feature is enabled
-    #[cfg(feature = "gui")]
-    #[arg(long, short = 'H', visible_alias = "cli", visible_alias = "nogui")]
-    headless: bool,
-
-    /// Detach from the parent terminal (run in background), only applicable on Windows
-    #[cfg(all(windows, feature = "gui"))]
-    #[arg(long, short = 'd')]
-    detach: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -123,8 +90,6 @@ enum CaptureMode {
     Live,
     #[cfg(feature = "pcap")]
     Pcap(PathBuf),
-    #[cfg(feature = "pktmon")]
-    Etl(PathBuf),
 }
 
 impl CaptureMode {
@@ -134,23 +99,9 @@ impl CaptureMode {
             return CaptureMode::Pcap(path.clone());
         }
 
-        #[cfg(feature = "pktmon")]
-        if let Some(path) = &args.etl {
-            return CaptureMode::Etl(path.clone());
-        }
-
         CaptureMode::Live
     }
 }
-
-#[cfg(not(any(feature = "pktmon", feature = "pcap")))]
-compile_error!("Either \"pktmon\" (windows exclusive) or \"pcap\" must be enabled");
-
-#[cfg(all(not(windows), feature = "gui"))]
-compile_error!("GUI is only available on windows");
-
-#[cfg(all(not(windows), feature = "pktmon"))]
-compile_error!("The \"pktmon\" capture backend is only available on windows");
 
 #[tokio::main]
 async fn main() {
@@ -163,26 +114,7 @@ async fn main() {
         error!("Backtrace: {:#?}", backtrace);
     }));
 
-    // Attach to parent console on Windows GUI builds
-    // This is needed for --help output and headless mode to be visible
-    // AttachConsole fails if no parent console exists (e.g. double-clicked from Explorer)
-    #[cfg(all(windows, feature = "gui"))]
-    let has_console =
-        unsafe { windows::Win32::System::Console::AttachConsole(windows::Win32::System::Console::ATTACH_PARENT_PROCESS).is_ok() };
-
     let args = Args::parse();
-
-    // Detach from parent terminal if requested
-    #[cfg(all(windows, feature = "gui"))]
-    if args.detach {
-        unsafe { windows::Win32::System::Console::FreeConsole().ok() };
-    }
-
-    // Allocate a console for headless mode if AttachConsole didn't work
-    #[cfg(all(windows, feature = "gui"))]
-    if args.headless && !has_console && !args.detach {
-        unsafe { windows::Win32::System::Console::AllocConsole().ok() };
-    }
 
     // Copy the exit_after_capture flag to a local variable before args is moved into the closure
     let exit_after_capture = args.exit_after_capture;
@@ -220,74 +152,6 @@ async fn main() {
 }
 
 async fn capture(args: Args) {
-    // Only self update on Windows, since that's the only platform we ship releases for
-    // In GUI mode, the update check is handled by the GUI after it launches
-    #[cfg(windows)]
-    {
-        #[cfg(feature = "gui")]
-        let gui_mode = !args.headless;
-        #[cfg(not(feature = "gui"))]
-        let gui_mode = false;
-
-        if !gui_mode && !args.no_update && !std::env::var("NO_SELF_UPDATE").is_ok_and(|v| v == "1") {
-            if let Err(e) = update::update_interactive(args.auth_token.as_deref(), args.always_update) {
-                error!("Failed to update: {}", e);
-            }
-        }
-    }
-
-    #[cfg(all(not(feature = "pcap"), feature = "pktmon"))]
-    if !unsafe { windows::Win32::UI::Shell::IsUserAnAdmin().into() } {
-        fn confirm(msg: &str) -> bool {
-            use std::io::Write;
-
-            print!("{}", msg);
-            if std::io::stdout().flush().is_err() {
-                return false;
-            }
-
-            let mut input = String::new();
-            if std::io::stdin().read_line(&mut input).is_err() {
-                return false;
-            }
-
-            input = input.trim().to_lowercase();
-            input.starts_with("y") || input.is_empty()
-        }
-
-        println!();
-        println!("===========================================================================================================");
-        println!("                       Administrative privileges are required to capture packets");
-        println!("===========================================================================================================");
-        println!();
-        println!("Reliquary Archiver now uses PacketMonitor (pktmon) to capture the game traffic instead of npcap on Windows");
-        println!("Due to the way pktmon works, it requires running the application as an administrator");
-        println!();
-        println!("If you don't feel comfortable running the application as an administrator, you can download the pcap");
-        println!("version of Reliquary Archiver from the GitHub releases page.");
-        println!();
-        if confirm("Would you like to restart the application with elevated privileges? (Y/n): ") {
-            if let Err(e) = escalate_to_admin() {
-                error!("Failed to escalate privileges: {}", e);
-            }
-        }
-
-        return;
-    }
-
-    #[cfg(feature = "gui")]
-    if !args.headless {
-        rgui::run().unwrap();
-
-        // Check if we need to spawn the updated version after GUI exits
-        if update::should_spawn_after_exit() {
-            if let Err(e) = update::spawn_updated_version() {
-                error!("Failed to spawn updated version: {}", e);
-            }
-        }
-        return;
-    }
-
     let iphone_rvi = setup_iphone_capture(&args);
     let capture_interface = iphone_rvi.as_ref().map(|rvi| rvi.interface.clone());
 
@@ -304,48 +168,26 @@ async fn capture(args: Args) {
             CaptureMode::Live => live_capture_wrapper(&args, exporter, sniffer, capture_interface).await,
             #[cfg(feature = "pcap")]
             CaptureMode::Pcap(path) => capture_from_pcap(exporter, sniffer, path),
-            #[cfg(feature = "pktmon")]
-            CaptureMode::Etl(path) => capture_from_etl(exporter, sniffer, path),
         };
 
         if let Some(export) = export {
             let file_name = Local::now().format("archive_output-%Y-%m-%dT%H-%M-%S.json").to_string();
-            let mut output_file = match args.output {
+            let output_file = match args.output {
                 Some(out) => out,
                 _ => PathBuf::from(file_name.clone()),
             };
 
-            macro_rules! pick_file {
-                () => {
-                    if let Some(new_path) = rfd::FileDialog::new()
-                        .set_title("Select output file location")
-                        .set_file_name(&file_name)
-                        .add_filter("JSON files", &["json"])
-                        .save_file()
-                    {
-                        output_file = new_path;
-                        continue;
-                    } else {
-                        error!("No alternative path selected, aborting write");
-                        break;
-                    }
-                };
-            }
             info!("exporting collected data");
-            loop {
-                match File::create(&output_file) {
-                    Ok(file) => {
-                        if let Err(e) = serde_json::to_writer_pretty(&file, &export) {
-                            error!("Failed to write to {}: {}", output_file.display(), e);
-                            pick_file!();
-                        }
+            match File::create(&output_file) {
+                Ok(file) => {
+                    if let Err(e) = serde_json::to_writer_pretty(&file, &export) {
+                        error!("Failed to write to {}: {}", output_file.display(), e);
+                    } else {
                         info!("wrote output to {}", output_file.canonicalize().unwrap().display());
-                        break;
                     }
-                    Err(e) => {
-                        error!("Failed to create file at {}: {}", output_file.display(), e);
-                        pick_file!();
-                    }
+                }
+                Err(e) => {
+                    error!("Failed to create file at {}: {}", output_file.display(), e);
                 }
             }
         } else {
@@ -811,30 +653,6 @@ where
     exporter.export()
 }
 
-#[instrument(skip_all)]
-#[cfg(feature = "pktmon")]
-fn capture_from_etl<E>(mut exporter: E, mut sniffer: GameSniffer, etl_path: PathBuf) -> Option<E::Export>
-where
-    E: Exporter,
-{
-    info!("Capturing from etl file: {}", etl_path.display());
-    let mut capture = pktmon::EtlCapture::new(&etl_path).expect("could not read etl file");
-    capture.start().expect("could not start etl capture");
-
-    while let Ok(packet) = capture.next_packet() {
-        match packet.payload {
-            pktmon::PacketPayload::Ethernet(payload) => match file_process_packet(&mut exporter, &mut sniffer, payload) {
-                ProcessResult::Continue => {}
-                ProcessResult::Stop => break,
-            },
-            _ => {}
-        }
-    }
-
-    capture.stop().expect("could not stop etl capture");
-    exporter.export()
-}
-
 async fn live_capture_wrapper<E>(args: &Args, exporter: E, sniffer: GameSniffer, capture_interface: Option<String>) -> Option<E::Export>
 where
     E: Exporter,
@@ -891,18 +709,8 @@ async fn live_capture(
     use reliquary::network::command::command_id::{PlayerGetTokenScRsp, PlayerLoginFinishScRsp, PlayerLoginScRsp};
     use reliquary::network::command::proto::PlayerGetTokenScRsp::PlayerGetTokenScRsp as PlayerGetTokenScRspProto;
 
-    let rx = {
-        #[cfg(feature = "pcap")]
-        {
-            let device_names = capture_interface.into_iter().collect();
-            capture::listen_on_all(capture::pcap::FilteredPcapBackend::new(device_names))
-        }
-
-        #[cfg(all(not(feature = "pcap"), feature = "pktmon"))]
-        {
-            capture::listen_on_all(capture::pktmon::PktmonBackend)
-        }
-    };
+    let device_names = capture_interface.into_iter().collect();
+    let rx = capture::listen_on_all(capture::pcap::FilteredPcapBackend::new(device_names));
 
     let packet_stream = rx.expect("Failed to start packet capture");
     let mut packet_stream = packet_stream.fuse();
@@ -953,12 +761,6 @@ async fn live_capture(
                                 GamePacket::Connection(c) => match c {
                                     ConnectionPacket::HandshakeEstablished { conv_id } => {
                                         info!(conv_id, "detected connection established");
-
-                                        if cfg!(all(feature = "pcap", windows)) {
-                                            info!(
-                                                "If the program gets stuck at this point for longer than 10 seconds, please try the pktmon release from https://github.com/IceDynamix/reliquary-archiver/releases/latest"
-                                            );
-                                        }
                                     }
                                     ConnectionPacket::Disconnected => {
                                         info!("detected connection disconnected");
@@ -1104,46 +906,4 @@ async fn maybe_timeout(timeout: Option<Duration>) -> () {
     } else {
         future::pending::<()>().await;
     }
-}
-
-#[cfg(all(not(feature = "pcap"), feature = "pktmon"))]
-fn escalate_to_admin() -> Result<(), Box<dyn std::error::Error>> {
-    use std::os::windows::ffi::OsStrExt;
-
-    use windows::Win32::System::Console::GetConsoleWindow;
-    use windows::Win32::UI::Shell::{SEE_MASK_NO_CONSOLE, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW};
-    use windows::Win32::UI::WindowsAndMessaging::{GW_OWNER, GetWindow, SW_SHOWNORMAL};
-    use windows::core::{PCWSTR, w};
-
-    let args_str = std::env::args().skip(1).collect::<Vec<_>>().join(" ");
-
-    let exe_path = std::env::current_exe()
-        .expect("Failed to get current exe")
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    let args = args_str.encode_utf16().chain(Some(0)).collect::<Vec<_>>();
-
-    unsafe {
-        let mut options = SHELLEXECUTEINFOW {
-            cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
-            fMask: SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NO_CONSOLE,
-            hwnd: GetWindow(GetConsoleWindow(), GW_OWNER).unwrap_or(GetConsoleWindow()),
-            lpVerb: w!("runas"),
-            lpFile: PCWSTR(exe_path.as_ptr()),
-            lpParameters: PCWSTR(args.as_ptr()),
-            lpDirectory: PCWSTR::null(),
-            nShow: SW_SHOWNORMAL.0,
-            lpIDList: std::ptr::null_mut(),
-            lpClass: PCWSTR::null(),
-            dwHotKey: 0,
-            ..Default::default()
-        };
-
-        ShellExecuteExW(&mut options)?;
-    };
-
-    // Exit the current process since we launched a new elevated one
-    std::process::exit(0);
 }

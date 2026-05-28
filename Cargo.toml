@@ -11,51 +11,29 @@ homepage = "https://github.com/hhharryyyyy/reliquary-archiver-mac"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-async-stream = "0.3.6"
-base64 = "0.22.1"
 clap = { version = "4.5.31", features = ["derive"] }
 chrono = "0.4.40"
 color-eyre = "0.6.3"
-protobuf = "=3.7.1" # match the protobuf version used in reliquary-codegen
 serde = { version = "1.0.218", features = ["derive"] }
 serde_json = "1.0.139"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json"] }
-ureq = "2.12.1"
 reliquary = { git = "https://github.com/IceDynamix/reliquary", tag = "v20.1.0", features = [
     "proto-rqa",
 ] }
-ctrlc = "3.4.5"
 tokio = { version = "1.44.2", features = ["full"] }
 tokio-stream = { version = "0.1.17", features = ["sync"] }
 futures = { version = "0.3.31" }
 serde_with = "3.12.0"
-open = "5.3.2"
-rfd = "0.17.2"
 tracing-log = "0.2.0"
 axum = { optional = true, version = "0.8.3", features = ["ws", "tracing"] }
 pcap = { optional = true, version = "2.2.0", features = ["capture-stream"] }
-raxis = { optional = true, git = "https://github.com/emmachase/raxis", rev = "4f688aa3789695972566204c1aa7265967d39496", features = ["tokio"] }
-
-[target.'cfg(windows)'.dependencies]
-# By default self_update makes its http requests with reqwest, which itself relies on tokio
-# main is an async function that lives within an already existing tokio runtime
-# therefore when self_update calls update(), a second tokio runtime is spawned which leads to a crash
-# self_update added a ureq feature but has not yet pushed to crates.io
-# (latest release is 0.42.0 which is over a year old as of writing this)
-self_update = { git = "https://github.com/jaemk/self_update", rev = "9ec008b4d66627d578966231cfd87a87bf4c7083", features = ["ureq", "rustls"], default-features = false}
-pktmon = { optional = true, version = "0.6.2", features = ["tokio"] }
-windows = { optional = true, version = "0.61"}
-windows-registry = { optional = true, version = "0.6.1" }
 
 [build-dependencies]
 ureq = { version = "2.12.1", features = ["json"] }
 reliquary = { git = "https://github.com/IceDynamix/reliquary", tag = "v20.1.0", features = [
     "proto-rqa",
 ] }
-
-[target.'cfg(windows)'.build-dependencies]
-winres = "0.1.12"
 
 [profile.dev]
 # there's a field in the kcp protocol that hyv uses differently from the default implementation
@@ -70,21 +48,5 @@ overflow-checks = false # see comment above
 
 [features]
 default = ["pcap", "stream"]
-gui = [
-    "stream",
-    "dep:raxis",
-    "windows/Win32_Foundation",
-    "windows/Win32_System_Console",
-    "windows/Win32_System_Registry",
-    "windows-registry"
-]
 stream = ["dep:axum"]
 pcap = ["dep:pcap"]
-pktmon = [
-    "dep:pktmon",
-    # windows dependencies necessary for admin detection and escalation
-    "windows/Win32_UI_Shell",
-    "windows/Win32_System_Console",
-    "windows/Win32_UI_WindowsAndMessaging",
-    "windows/Win32_System_Registry",
-]

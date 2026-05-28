@@ -359,17 +359,7 @@ async fn live_capture(
     // Outer loop to restart capture when it exits
     loop {
         let live_rx = {
-            let result = {
-                #[cfg(feature = "pcap")]
-                {
-                    capture::listen_on_all(capture::pcap::PcapBackend)
-                }
-
-                #[cfg(all(not(feature = "pcap"), feature = "pktmon"))]
-                {
-                    capture::listen_on_all(capture::pktmon::PktmonBackend)
-                }
-            };
+            let result = capture::listen_on_all(capture::pcap::PcapBackend);
 
             match result.map_err(|e| e.to_string()) {
                 Ok(rx) => rx,
@@ -420,12 +410,6 @@ async fn live_capture(
                                 ConnectionPacket::HandshakeEstablished { conv_id } => {
                                     info!(conv_id, "detected connection established");
                                     metric_tx.send(SnifferMetric::ConnectionEstablished).await.ok();
-
-                                    if cfg!(all(feature = "pcap", windows)) {
-                                        info!(
-                                            "If the program gets stuck at this point for longer than 10 seconds, please try the pktmon release from https://github.com/IceDynamix/reliquary-archiver/releases/latest"
-                                        );
-                                    }
                                 }
                                 ConnectionPacket::Disconnected => {
                                     info!("detected connection disconnected");
